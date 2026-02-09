@@ -1,4 +1,3 @@
-# sustio_claims_app.py
 import io, re, calendar
 from datetime import date
 import numpy as np
@@ -22,6 +21,11 @@ BASE_PRESENT = {"M","N","M8","N8","RN8","RM8","ON8","PM8","PN8","PN","PM","RN","
 MARK_8H      = {"M8","N8","RN8","RM8","ON8","PM8","PN8","OM8"}
 
 # ───────────────────────────── Helpers ─────────────────────────────
+
+def excel_engine_from_name(name: str):
+    name = str(name).lower()
+    return "openpyxl" if name.endswith("xlsx") else "xlrd"
+
 def norm_text(s: pd.Series) -> pd.Series:
     return s.astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
 
@@ -140,7 +144,8 @@ def cap_days_by_window(df: pd.DataFrame, day_cols, cycle_end):
 
 # ───────────────── Attendance parsing ─────────────────
 def detect_attendance(att_file):
-    raw = pd.read_excel(att_file, sheet_name=0, header=None)
+    engine = excel_engine_from_name(att_file.name)
+    raw = pd.read_excel(att_file, sheet_name=0, header=None, engine=engine)
     header_idx = 0; found_emp=False; found_name=False
     for i in range(min(25, len(raw))):
         vals = norm_text(raw.iloc[i]).str.lower().tolist()
@@ -156,7 +161,13 @@ def detect_attendance(att_file):
             day_row_idx = j; break
 
     if day_row_idx is not None:
-        df = pd.read_excel(att_file, sheet_name=0, header=[header_idx, day_row_idx])
+        df = pd.read_excel(
+    att_file,
+    sheet_name=0,
+    header=[header_idx, day_row_idx],
+    engine=engine,
+)
+
         flat = []
         for t,b in df.columns:
             ts, bs = str(t).strip(), str(b).strip()
@@ -165,7 +176,13 @@ def detect_attendance(att_file):
             else: flat.append(ts if ts and ts.lower()!="nan" else bs)
         df.columns = flat
     else:
-        df = pd.read_excel(att_file, sheet_name=0, header=header_idx)
+        df = pd.read_excel(
+    att_file,
+    sheet_name=0,
+    header=header_idx,
+    engine=engine,
+)
+
 
     df = df.dropna(how="all").reset_index(drop=True)
     df.columns = norm_text(pd.Index(df.columns))
@@ -371,9 +388,10 @@ if att_file and ml_file:
         att_df, day_cols, meta = detect_attendance(att_file)
 
         # Masterlist (auto-normalize + mapping UI)
-        xls = pd.ExcelFile(ml_file)
+        ml_engine = excel_engine_from_name(ml_file.name)
+        xls = pd.ExcelFile(ml_file, engine=ml_engine)
         ml_sheet = st.selectbox("Masterlist sheet", xls.sheet_names, index=0)
-        master_raw = pd.read_excel(xls, sheet_name=ml_sheet)
+        master_raw = pd.read_excel(xls, sheet_name=ml_sheet, engine=ml_engine)
         auto_ml = normalize_masterlist_auto(master_raw)
 
         st.markdown("**Masterlist column mapping (adjust only if auto is wrong):**")
