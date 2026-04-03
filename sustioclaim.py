@@ -13,7 +13,7 @@ st.markdown(
     "- Claim window = **16th of previous month → 15th of selected month** (choose below)\n"
     "- **Transportation** and **Shift** are ignored\n"
     "- Matching order: **Worker No (raw & digits)** → **Name (exact)** → **Name (fuzzy)**\n"
-    "- **Eligibility cap**: days **outside** [`JOIN_DATE`, `JOIN_DATE+3 months−1 day`] are set to **0**"
+    
 )
 
 # ───────────────────────────── Constants ─────────────────────────────
@@ -21,6 +21,25 @@ BASE_PRESENT = {"M","N","M8","N8","RN8","RM8","ON8","PM8","PN8","PN","PM","RN","
 MARK_8H      = {"M8","N8","RN8","RM8","ON8","PM8","PN8","OM8"}
 
 # ───────────────────────────── Helpers ─────────────────────────────
+
+NEW_POLICY = pd.Timestamp("2026-01-01")
+
+def compute_claim_window(join_date):
+    if pd.isna(join_date):
+        return pd.NaT, pd.NaT
+
+    if join_date >= NEW_POLICY:
+        claim_start = (join_date + pd.DateOffset(months=1)).normalize()
+    else:
+        claim_start = join_date.normalize()
+
+    eligible_end = (
+        claim_start
+        + pd.DateOffset(months=3)
+        - pd.Timedelta(days=1)
+    ).normalize()
+
+    return claim_start, eligible_end
 
 def excel_engine_from_name(name: str):
     name = str(name).lower()
@@ -105,8 +124,8 @@ def cap_days_by_window(df: pd.DataFrame, day_cols, cycle_end):
     window_start   = pd.Timestamp(prev_month_end.year, prev_month_end.month, 16)
 
     # Per-row limits
-    join = pd.to_datetime(d["JOIN_DATE"], errors="coerce")
-    elig = join + pd.offsets.DateOffset(months=3) - pd.Timedelta(days=1)
+    join = pd.to_datetime(d["Claim Start"])
+    elig = pd.to_datetime(d["Eligible End Date"])
 
     prev_month = window_start.month
     prev_year  = window_start.year
@@ -420,10 +439,12 @@ if att_file and ml_file:
             keep_only_master=(not bypass_master),
             fuzzy_threshold=fuzzy_thr
         )
-
+        claim_all["Claim Start"], claim_all["Eligible End Date"] = zip(
+    *claim_all["JOIN_DATE"].apply(compute_claim_window)
+)
         # Cap days by real dates in the selected cycle window, then add Eligible End to preview
         claim_all = cap_days_by_window(claim_all, day_cols, cycle_end)
-        claim_all = add_eligible_end_date(claim_all)
+        
 
         # Diagnostics
         if debug_mode:
@@ -444,7 +465,7 @@ if att_file and ml_file:
 
         # On-screen preview (combined; shows Eligible End Date)
         st.subheader(f"Claim — preview ({len(claim_all)})")
-        preview_cols = ["Worker No","Worker Name","JOIN_DATE","Eligible End Date","Recruiter"] + day_cols + ["Total Working Days","Worker_Type"]
+        preview_cols = ["Worker No","Worker Name","JOIN_DATE","Claim Start","Eligible End Date","Recruiter"] + day_cols + ["Total Working Days","Worker_Type"]
         st.dataframe(claim_all[preview_cols].head(50), use_container_width=True)
 
         st.subheader("👥 Per-Recruiter Summary")
@@ -472,10 +493,29 @@ if att_file and ml_file:
         # ---------- Write Excel (single combined sheet) ----------
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine="xlsxwriter") as wr:
-            ordered_cols = ["Worker No","Worker Name","JOIN_DATE","Eligible End Date","Recruiter"] + day_cols + ["Total Working Days","Worker_Type"]
+
+            ordered_cols = [
+                "Worker No",
+                "Worker Name",
+                "Recruiter",
+                "JOIN_DATE",
+                "Claim Start",
+                "Eligible End Date"
+            ] + day_cols + ["Total Working Days","Worker_Type"]
+
             ordered_cols = [c for c in ordered_cols if c in claim_export.columns]
-            claim_export[ordered_cols].to_excel(wr, index=False, sheet_name="Claim")
-            rec_sum_export.to_excel(wr, index=False, sheet_name="Recruiter_Summary")
+
+            claim_export[ordered_cols].to_excel(
+                wr,
+                index=False,
+                sheet_name="Claim"
+            )
+
+            rec_sum_export.to_excel(
+                wr,
+                index=False,
+                sheet_name="Recruiter_Summary"
+            )
 
         st.download_button(
             f"⬇️ Download Claim Report (Combined + Recruiter Summary){' — Unassigned Excluded' if exclude_unassigned_export else ''}",
@@ -494,3 +534,4 @@ if att_file and ml_file:
 
 else:
     st.info("Upload both files to generate the claim report.")
+
