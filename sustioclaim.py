@@ -1,3 +1,4 @@
+# sustio_claims_app.py
 import io, re, calendar
 from datetime import date
 import numpy as np
@@ -10,7 +11,6 @@ st.title("📊 Sustio Claim Builder")
 
 st.markdown(
     "- Attendance codes: **M, N, M8, N8, RN8, RM8, ON8, PM8, PN8**\n"
-    "- Claim window = **16th of previous month → 15th of selected month** (choose below)\n"
     "- **Transportation** and **Shift** are ignored\n"
     "- Matching order: **Worker No (raw & digits)** → **Name (exact)** → **Name (fuzzy)**\n"
     
@@ -61,10 +61,15 @@ def reorder_day_cols(cols):
     for c in cols:
         try:
             n = int(str(c).strip())
-            if 1 <= n <= 31: nums.append(n)
-        except: pass
+            if 1 <= n <= 31:
+                nums.append(n)
+        except:
+            pass
+
     nums = sorted(set(nums))
-    return [str(d) for d in range(16,32) if d in nums] + [str(d) for d in range(1,16) if d in nums]
+
+    # ✅ NORMAL MONTH ORDER
+    return [str(d) for d in nums]
 
 def make_keys(series: pd.Series):
     raw   = norm_text(series).str.upper()
@@ -127,27 +132,18 @@ def cap_days_by_window(df: pd.DataFrame, day_cols, cycle_end):
     join = pd.to_datetime(d["Claim Start"])
     elig = pd.to_datetime(d["Eligible End Date"])
 
-    prev_month = window_start.month
-    prev_year  = window_start.year
     end_month  = cycle_end_ts.month
     end_year   = cycle_end_ts.year
 
     for c in day_cols:
         day = int(c)
-        # First segment: 16..31 in previous month
-        if 16 <= day <= 31:
-            try:
-                actual = pd.Timestamp(prev_year, prev_month, day)
-            except ValueError:
-                if c in d.columns: d[c] = 0
-                continue
-        else:
-            # Second segment: 1..15 in selected (end) month
-            try:
-                actual = pd.Timestamp(end_year, end_month, day)
-            except ValueError:
-                if c in d.columns: d[c] = 0
-                continue
+        try:
+            # ✅ All days belong to selected month now (1–28/30/31)
+            actual = pd.Timestamp(end_year, end_month, day)
+        except ValueError:
+            if c in d.columns:
+                d[c] = 0
+            continue
 
         col = str(c)
         if col not in d.columns:
@@ -395,8 +391,10 @@ cycle_end = month_year_picker()
 cycle_end_ts   = pd.Timestamp(cycle_end.year, cycle_end.month, 15)
 cycle_start_dt = cycle_end_ts - pd.offsets.MonthBegin(1)
 prev_month_end = cycle_start_dt - pd.Timedelta(days=1)
-window_start   = pd.Timestamp(prev_month_end.year, prev_month_end.month, 16)
-st.info(f"Claim window: **{window_start.date()} → {cycle_end_ts.date()}**")
+window_start = pd.Timestamp(cycle_end.year, cycle_end.month, 1)
+month_end = pd.Timestamp(cycle_end.year, cycle_end.month, calendar.monthrange(cycle_end.year, cycle_end.month)[1])
+
+st.info(f"Claim window: **{window_start.date()} → {month_end.date()}**")
 
 att_file = st.file_uploader("📄 Attendance (xlsx/xls)", type=["xlsx","xls"])
 ml_file  = st.file_uploader("📇 Masterlist (xlsx/xls)", type=["xlsx","xls"])
@@ -534,4 +532,5 @@ if att_file and ml_file:
 
 else:
     st.info("Upload both files to generate the claim report.")
+
 
